@@ -9,4 +9,5 @@ include_once 'inc/actions.php';
 
 include_once 'class/FiltersHandler.class.php';
 include_once 'inc/filters.php';
+include_once 'wcSettings.php';
 

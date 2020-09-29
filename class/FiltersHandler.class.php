@@ -90,15 +90,6 @@ class DKP_FiltersHandler
 
     }
 
-    /**
-     * Create the section beneath the products tab
-     **/
-    function wcslider_add_section( $sections ) {
-
-        $sections['wcslider'] = __( 'WC Slider', 'text-domain' );
-        return $sections;
-
-    }
 
 
 

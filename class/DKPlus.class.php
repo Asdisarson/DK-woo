@@ -70,6 +70,7 @@ class DKP_DKPlus
             $response['HTTP_CODE'] = curl_getinfo($curl, CURLINFO_HTTP_CODE);
 
         }
+        self::logData('request_data.txt', json_encode($response['result']));
 
         curl_close($curl);
 
@@ -80,70 +81,86 @@ class DKP_DKPlus
     public static function syncAllProducts()
     {
         global $wpdb;
-        $DKProductArray = self::getProduct("?onweb=true", "", "");
-        $post_id_array_web = array();
-        foreach ($DKProductArray as $DKproduct) {
-            $sku = $DKproduct['ItemCode'];
-            $product_id = $wpdb->get_var($wpdb->prepare("SELECT post_id FROM $wpdb->postmeta WHERE meta_key='_sku' AND meta_value='%s' LIMIT 1", $sku));
-            if ($product_id) {
-                self::CreateOrUpdateProduct($product_id, $DKproduct);
-            } else {
-                $product_id = self::CreateOrUpdateProduct($DKproduct);
+        $curl = curl_init();
+
+        curl_setopt_array($curl, array(
+            CURLOPT_URL => "https://api.dkplus.is/api/v1/Product/?onweb=true",
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_ENCODING => "",
+            CURLOPT_MAXREDIRS => 10,
+            CURLOPT_TIMEOUT => 0,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_CUSTOMREQUEST => "GET",
+            CURLOPT_HTTPHEADER => array(
+                'Content-Type: application/json',
+                "Authorization: Bearer 928c422d-30b0-44c0-8d98-812d64a397c3"
+            ),
+        ));
+
+        $response = curl_exec($curl);
+
+        curl_close($curl);
+        $array = json_decode($response);
+        $onWeb = $wpdb->get_results($wpdb->prepare("SELECT meta_value, post_id FROM $wpdb->posmeta WHERE meta_key='_sku'")) ;
+        $not_in_array = array_diff(array_column($onWeb,'meta_value'),array_column($array,'ItemCode'));
+        foreach ($array as $product) {
+            $element = array_search($product->ItemCode,$onWeb);
+            if(!empty($element)) {
+                update_post_meta($onWeb[$element]->post_id,'_price', $product->UnitPrice1WithTax);
+                update_post_meta($onWeb[$element]->post_id,'_stock', $product->TotalQuantityInWarehouse);
             }
-            array_push($post_id_array_web, $product_id);
+            else {
+               $post_id = self::add_product($product);
+                update_post_meta( $post_id, '_visibility', 'visible' );
+                update_post_meta( $post_id, '_stock_status', 'instock');
+                update_post_meta( $post_id, '_regular_price', $product->UnitPrice1WithTax );
+                update_post_meta( $post_id, '_sku', $product->ItemCode);
+                update_post_meta( $post_id, '_price', $product->UnitPrice1WithTax );
+                update_post_meta( $post_id, '_manage_stock', "yes" );
+                update_post_meta( $post_id, '_stock', $product->TotalQuantityInWarehouse );
+            }
         }
-        $all_products_id_in_woo = $wpdb->get_var($wpdb->prepare("SELECT post_id FROM $wpdb->postmeta WHERE meta_key='_sku'"));
-        $DisableArray = array_diff($post_id_array_web, $all_products_id_in_woo);
-        foreach ($DisableArray as $disable) {
-            self::DisableProduct($disable);
+        foreach ($not_in_array as $product) {
+            $element = array_search($product->ItemCode,$onWeb);
+            $element = $wpdb->get_results($wpdb->prepare("SELECT * FROM $wpdb->posts WHERE id=".$onWeb[$element]->post_id)) ;
+            if($element) {
+                $element['post_status'] = 'draft';
+                wp_update_post($element);
+            }
         }
     }
-
-    public static function DisableProduct($product_id)
+    public function add_product($product){
+        $post_id = wp_insert_post( array(
+            'post_title' =>  $product->Description,
+            'post_content' => $product->Description2,
+            'post_status' => 'draft',
+            'post_type' => "product",
+        ) );
+        wp_set_object_terms( $post_id, 'simple', 'product_type' );
+        return $post_id;
+    }
+    public static function UpdateProduct($DK_product, $post_id, $true)
     {
-        $objProduct = new WC_Product();
-        if ($product_id) {
-            $objProduct = new WC_Product($product_id);
+        if ($true) {
+            wp_set_object_terms( $post_id, 'simple', 'product_type');
+            update_post_meta( $post_id, '_visibility', 'visible' );
+            update_post_meta( $post_id, '_stock_status', 'instock');
+            update_post_meta( $post_id, '_regular_price', $DK_product->UnitPrice1WithTax );
+            update_post_meta( $post_id, '_sku', $DK_product->ItemCode);
+            update_post_meta( $post_id, '_price', $DK_product->UnitPrice1WithTax );
+            update_post_meta( $post_id, '_manage_stock', "yes" );
+            update_post_meta( $post_id, '_stock', $DK_product->TotalQuantityInWarehouse );
         }
-
-        $objProduct->set_status("draft");  // can be publish,draft or any wordpress post status
-        $product_id = $objProduct->save(); // it will save the product and return the generated product id
-
+        else {
+            update_post_meta( $post_id, '_regular_price', $DK_product->UnitPrice1WithTax );
+            update_post_meta( $post_id, '_price', $DK_product->UnitPrice1WithTax );
+            update_post_meta( $post_id, '_stock', $DK_product->TotalQuantityInWarehouse );
+        }
+        return $post_id;
     }
 
-    public static function CreateOrUpdateProduct($product_id = null, $DK_product)
-    {
-        $objProduct = new WC_Product();
-        if ($product_id) {
-            $objProduct = new WC_Product($product_id);
-            $objProduct->set_name($DK_product['Description']);
-            $objProduct->set_status("draft");  // can be publish,draft or any wordpress post status
-            $objProduct->set_catalog_visibility('visible'); // add the product visibility status
-            $objProduct->set_description($DK_product['Description2']);
-            $objProduct->set_sku($DK_product['ItemCode']); //can be blank in case you don't have sku, but You can't add duplicate sku's
-            $objProduct->set_manage_stock(true); // true or false
-            $objProduct->set_sold_individually(false);
-            $objProduct->set_reviews_allowed(false);
-            $objProduct->set_backorders('no');
 
-        }
-        $objProduct->set_price($DK_product['UnitPrice1WithTax']); // set product price
-        $objProduct->set_regular_price($DK_product['UnitPrice1WithTax']); // set product regular price
-        $objProduct->set_stock_quantity($DK_product['TotalQuantityInWarehouse']);
-        $objProduct->set_stock_status('instock'); // in stock or out of stock value
-        $product_id = $objProduct->save(); // it will save the product and return the generated product id
-        return $product_id;
-    }
-
-    static function unsetValue(array $array, $value, $strict = TRUE)
-    {
-        if (($key = array_search($value, $array, $strict)) !== FALSE) {
-            unset($array[$key]);
-        }
-        return $array;
-    }
-
-    public
     static function logData($file, $data)
     {
 

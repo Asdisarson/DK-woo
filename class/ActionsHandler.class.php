@@ -42,7 +42,10 @@ class DKP_ActionsHandler {
 				$product_id = $variation_id;
 			}
 			$quantity = $value['quantity'];
-			$item_code = get_post_meta($product_id, 'item_code', true);
+
+            $product = wc_get_product($product_id);
+
+            $item_code = $product->get_sku();
 
 			if($item_code) {
 
@@ -50,7 +53,6 @@ class DKP_ActionsHandler {
 
 				if( $quantity > $product_stock ) {
 
-					$product = wc_get_product($product_id);
 
 					wc_add_notice('Maximum <b>' . $product_stock . '</b> of <b>"' . $product->get_name() . '"</b> is allowed per order', 'error');
 
